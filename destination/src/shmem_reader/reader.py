@@ -2,10 +2,15 @@
 
 import sys
 import time
+import math
 import mmap
 import struct
 from posix_ipc import SharedMemory, Semaphore, ExistentialError, BusyError
 import numpy as np
+
+# Upper bound on ndim accepted from a frame header (numpy's historical limit)
+MAX_NDIM = 32
+DOUBLE_SIZE = 8
 
 
 class ShmemReader:
@@ -85,12 +90,29 @@ class ShmemReader:
         if self.sem_ack is not None:
             self.sem_ack.release()
 
+    def receive(self) -> np.ndarray | tuple[np.ndarray, int] | None:
+        """Wait for a frame, read it and acknowledge it.
+
+        The acknowledgment is sent even when the frame is malformed or
+        reading fails, so a bad frame never leaves the writer blocked.
+        Returns the same values as read_data().
+        """
+        self.wait_for_data()
+        try:
+            return self.read_data()
+        finally:
+            self.acknowledge_data()
+
     def read_data(self) -> np.ndarray | tuple[np.ndarray, int] | None:
         """Read data array from shared memory.
 
         Returns the array directly when data_id is 0 (default/unused),
         or (array, data_id) when the writer set a non-zero data_id.
-        Returns None on error.
+        Returns None on error or when the frame header is malformed.
+
+        The caller must still call acknowledge_data() when this returns
+        None, otherwise the writer times out on every subsequent write.
+        Prefer receive(), which does that unconditionally.
         """
         if self.mapfile is None:
             print("Shared memory not initialized", file=sys.stderr)
@@ -105,9 +127,32 @@ class ShmemReader:
 
             data_id = struct.unpack('H', self.mapfile.read(2))[0]
             ndim = struct.unpack('I', self.mapfile.read(4))[0]
+
+            # Validate the header before trusting it for any further reads
+            if not 1 <= ndim <= MAX_NDIM:
+                print(f"Malformed frame: ndim ({ndim}) must be in 1..{MAX_NDIM}",
+                      file=sys.stderr)
+                return None
+
+            if data_size % DOUBLE_SIZE != 0:
+                print(f"Malformed frame: data_size ({data_size}) is not a multiple "
+                      f"of {DOUBLE_SIZE}", file=sys.stderr)
+                return None
+
+            header_size = 8 + 2 + 4 + ndim * 4
+            if header_size + data_size > self.size:
+                print(f"Malformed frame: header ({header_size}) + data_size ({data_size}) "
+                      f"exceeds shared memory size ({self.size})", file=sys.stderr)
+                return None
+
             dims = struct.unpack(f'{ndim}I', self.mapfile.read(ndim * 4))
 
-            num_doubles = data_size // 8
+            num_doubles = data_size // DOUBLE_SIZE
+            if math.prod(dims) != num_doubles:
+                print(f"Malformed frame: product of dims {dims} != number of doubles "
+                      f"({num_doubles}, data_size={data_size})", file=sys.stderr)
+                return None
+
             data_bytes = self.mapfile.read(data_size)
             data = np.frombuffer(data_bytes, dtype=np.float64, count=num_doubles)
             array = data.reshape(dims)

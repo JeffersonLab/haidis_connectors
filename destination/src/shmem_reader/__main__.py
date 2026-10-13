@@ -19,9 +19,7 @@ def reader_worker(reader_id: int, shmem_name: str, shmem_size: int,
     print(f"[Reader {reader_id}] Waiting for data...")
     try:
         for iteration in itertools.count():
-            reader.wait_for_data()
-            result = reader.read_data()
-            reader.acknowledge_data()
+            result = reader.receive()
             if result is not None:
                 if isinstance(result, tuple):
                     data, data_id = result

@@ -30,5 +30,5 @@ pattern = "(?P<version>[^\n]+)"
 [tool.hatch.build.targets.wheel]
 packages = ["src/shmem_reader"]
 
-[tool.uv]
-dev-dependencies = []
+[dependency-groups]
+dev = ["pytest>=8.0"]

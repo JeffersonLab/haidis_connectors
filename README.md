@@ -103,6 +103,20 @@ DOCKER_API_VERSION=1.43 docker run --rm --ipc=host \
 
 A successful run prints `9 passed, 0 failed`. Any `[FAIL]` line indicates the test name and the broken invariant.
 
+### Unit tests — Python ShmemReader
+
+`destination/tests/test_reader.py` covers frame-header validation (malformed frames are dropped) and checks that `receive()` always acknowledges the writer. `posix-ipc` is Linux-only, so run it in a container from the repo root:
+
+```bash
+DOCKER_API_VERSION=1.43 docker run --rm -v "$(pwd)":/repo:ro python:3.11 \
+  bash -c "cp -r /repo /work && cd /work/destination && \
+           pip install -q . pytest && pytest -q tests"
+```
+
+A successful run prints `12 passed`.
+
+When using `ShmemReader` from your own code, prefer `receive()` (wait, read, acknowledge) over calling `wait_for_data()` / `read_data()` / `acknowledge_data()` separately. If you do call them separately, acknowledge even when `read_data()` returns `None`; otherwise the writer times out on every subsequent write.
+
 ### Integration test — C++ source ↔ Python destination
 
 `scripts/integration_test.sh` builds both container images, runs them together, and validates the end-to-end data handoff. Run from the repo root:

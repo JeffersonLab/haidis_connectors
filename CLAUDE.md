@@ -132,6 +132,20 @@ Expected output (all pass):
 === Results: 9 passed, 0 failed ===
 ```
 
+### Unit tests — Python ShmemReader (`destination/tests/test_reader.py`)
+
+Covers frame-header validation in `read_data()` (bad `ndim`, `data_size` not a multiple of 8, payload beyond the mapping, `product(dims)` mismatch — all dropped with a `Malformed frame:` message) and that `receive()` always acknowledges the writer. Uses an anonymous mmap and stub semaphores, but `posix-ipc` is Linux-only, so run in a container from the repo root:
+
+```bash
+DOCKER_API_VERSION=1.43 docker run --rm -v "$(pwd)":/repo:ro python:3.11 \
+  bash -c "cp -r /repo /work && cd /work/destination && \
+           pip install -q . pytest && pytest -q tests"
+```
+
+Expected: `12 passed`.
+
+`ShmemReader.receive()` does wait → read → ack with the ack in a `finally`. Callers using the three methods separately must ack even when `read_data()` returns `None`, or the writer times out on every subsequent write.
+
 ### Integration test — C++ source ↔ Python destination (`scripts/integration_test.sh`)
 
 Builds both containers, runs them for a configurable window, then validates successful handoffs end-to-end. Must be run from the repo root:
